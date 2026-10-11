@@ -20,6 +20,18 @@
 
 ## 安装
 
-由仓库根目录的 **Hang DSH Plugins** 总 bundle 统一安装和装配，不面向用户单独安装。
+可作为独立插件安装，不需要安装 **Hang DSH Plugins** 总 bundle：
+
+```bash
+dsh plugin add @hanger-source/dsh-quota-monitor
+```
+
+也可以继续通过 `@hanger-source/hang-dsh-plugins` 总 bundle 统一安装；两种方式不要在同一个 profile 中重复启用。
+
+## 发布
+
+包名：`@hanger-source/dsh-quota-monitor`
+
+版本由本目录的 `package.json` 独立管理。推送 `dsh-quota-monitor-v<version>` 标签，或在 GitHub Actions 手动运行 **Release DSH Quota Monitor**，会在独立 CI 通过后发布到 npm 并创建 GitHub Release。
 
 Host 通过自己的 `/api/hanger/quota` 路由向 Client 返回 JSON，不依赖动态插件的 `harness.handle/host.call` 通道。

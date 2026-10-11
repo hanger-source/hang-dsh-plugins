@@ -1,0 +1,121 @@
+name: Release DSH Quota Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from plugins/quota-monitor/package.json
+        required: true
+        type: string
+  push:
+    tags:
+      - 'dsh-quota-monitor-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check plugins/quota-monitor/index.js
+          node --check plugins/quota-monitor/client.js
+
+      - name: Check npm package contents
+        working-directory: plugins/quota-monitor
+        run: npm pack --dry-run
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Use npm with trusted publishing support
+        run: npm install --global npm@11
+
+      - name: Validate release version
+        id: release
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          package_version="$(node -p "require('./plugins/quota-monitor/package.json').version")"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            requested_version="${GITHUB_REF_NAME#dsh-quota-monitor-v}"
+          else
+            requested_version="$DISPATCH_VERSION"
+          fi
+
+          if [[ "$requested_version" != "$package_version" ]]; then
+            echo "Requested version $requested_version does not match package version $package_version" >&2
+            exit 1
+          fi
+
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "tag=dsh-quota-monitor-v$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Pack package
+        id: pack
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          tarball="$(npm pack ./plugins/quota-monitor --pack-destination artifacts --json | node -e "let data=''; process.stdin.on('data', chunk => data += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(data)[0].filename))")"
+          shasum -a 256 "artifacts/$tarball" > "artifacts/$tarball.sha256"
+          echo "tarball=artifacts/$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Publish package
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance
+
+      - name: Create tag for manual release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        shell: bash
+        run: |
+          gh release create "$TAG" "$TARBALL" "$TARBALL.sha256" \
+            --title "DSH Quota Monitor $VERSION" \
+            --generate-notes \
+            --verify-tag
